@@ -59,16 +59,75 @@ export default function WalletPage() {
     }
   }
 
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [upiId, setUpiId] = useState("");
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+
   const handleWithdraw = async () => {
     if (walletInfo.balance < 10) {
       toast.error("Minimum withdrawal amount is $10.00");
       return;
     }
+    setWithdrawAmount(walletInfo.balance.toFixed(2));
+    setShowWithdrawModal(true);
+  };
+
+  const handleWithdrawSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!upiId) {
+      toast.error("Please enter your UPI ID");
+      return;
+    }
 
     setIsWithdrawing(true);
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    toast.success("Withdrawal request submitted!");
-    setIsWithdrawing(false);
+
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (!user) {
+        toast.error("Please login to withdraw");
+        return;
+      }
+
+      // Call the withdrawal API
+      const response = await fetch('/api/payment/withdraw', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: walletInfo.balance,
+          userId: user.id,
+          upiId
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        toast.success(`Withdrawal of $${walletInfo.balance.toFixed(2)} submitted! Funds will be sent to ${upiId}`);
+        
+        // Create a pending transaction record
+        await supabase.from('transactions').insert({
+          user_id: user.id,
+          type: 'payout',
+          amount: walletInfo.balance,
+          status: 'pending',
+          description: `Withdrawal to UPI: ${upiId}`
+        });
+        
+        // Refresh wallet data
+        fetchWalletData();
+      } else {
+        toast.error(data.error || "Withdrawal failed");
+      }
+    } catch (error) {
+      toast.error("Failed to process withdrawal");
+    } finally {
+      setIsWithdrawing(false);
+      setShowWithdrawModal(false);
+      setUpiId("");
+    }
   };
 
   function formatDate(dateStr: string) {
@@ -185,6 +244,71 @@ export default function WalletPage() {
           </div>
         </div>
       </div>
+
+      {/* Withdraw Modal */}
+      {showWithdrawModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6">
+            <h3 className="text-xl font-bold text-navy-900 mb-4">Withdraw Funds</h3>
+            <p className="text-gray-600 mb-6">
+              Enter your UPI ID to receive your earnings. Funds will be transferred instantly.
+            </p>
+            
+            <form onSubmit={handleWithdrawSubmit}>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Available Balance
+                </label>
+                <div className="text-2xl font-bold text-green-600">${walletInfo.balance.toFixed(2)}</div>
+              </div>
+
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  UPI ID
+                </label>
+                <input
+                  type="text"
+                  value={upiId}
+                  onChange={(e) => setUpiId(e.target.value)}
+                  placeholder="yourname@upi"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-navy-900 focus:border-transparent"
+                  required
+                />
+                <p className="text-sm text-gray-500 mt-2">
+                  Enter your UPI ID (e.g., mobilenumber@upi)
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowWithdrawModal(false);
+                    setUpiId("");
+                  }}
+                  className="flex-1 py-3 px-4 border border-gray-300 rounded-lg font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isWithdrawing}
+                  className="flex-1 bg-navy-900 text-white py-3 px-4 rounded-lg font-medium hover:bg-navy-800 disabled:opacity-50"
+                >
+                  {isWithdrawing ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Processing...
+                    </span>
+                  ) : (
+                    `Withdraw $${walletInfo.balance.toFixed(2)}`
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
